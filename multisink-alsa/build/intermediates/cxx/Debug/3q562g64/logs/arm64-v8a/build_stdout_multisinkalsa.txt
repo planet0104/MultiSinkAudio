@@ -1,0 +1,12 @@
+ninja: Entering directory `C:\Users\glsa-\AndroidStudioProjects\TestAudioDevice\multisink-alsa\.cxx\Debug\3q562g64\arm64-v8a'
+[1/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/pcm_hw.c.o
+[2/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/snd_card_plugin.c.o
+[3/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/pcm.c.o
+[4/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/mixer_hw.c.o
+[5/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/pcm_plugin.c.o
+[6/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/limits.c.o
+[7/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/mixer.c.o
+[8/11] Building C object CMakeFiles/tinyalsa.dir/tinyalsa/src/mixer_plugin.c.o
+[9/11] Linking C static library libtinyalsa.a
+[10/11] Building CXX object CMakeFiles/multisinkalsa.dir/multisinkalsa_jni.cpp.o
+[11/11] Linking CXX shared library C:\Users\glsa-\AndroidStudioProjects\TestAudioDevice\multisink-alsa\build\intermediates\cxx\Debug\3q562g64\obj\arm64-v8a\libmultisinkalsa.so

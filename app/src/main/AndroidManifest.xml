@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+        我们走 tinyalsa 直写 /dev/snd/pcmC*D*p，不需要 MODIFY_AUDIO_ROUTING 之类的特权权限。
+        主要靠 ueventd.rc 把 /dev/snd/pcm*、/dev/snd/control* 放成 0666 来拿写权限
+        （脚本：scripts/setup_device.ps1）。
+
+        RECORD_AUDIO 是兜底——AOSP platform.xml 会把这条权限关联到 audio gid，
+        授予后进程会带 audio gid，原生 0660 节点也写得动。
+        我们并不录音，只是借这条拿 gid，所以 tools:ignore 一下 lint。
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"
+        tools:ignore="MissingPermission" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="${appLabel}"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MultiSinkAudio">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
