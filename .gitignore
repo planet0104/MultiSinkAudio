@@ -8,7 +8,8 @@
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
 .DS_Store
-/build
+# build 产物——用 build/ (无前导 /) 可以匹配所有子模块的 build 目录
+build/
 /captures
 .externalNativeBuild
 .cxx
