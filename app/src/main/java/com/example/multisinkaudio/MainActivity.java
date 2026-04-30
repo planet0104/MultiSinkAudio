@@ -19,6 +19,9 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.example.multisinkaudio.alsa.Mp3DecodeHelper;
+import com.example.multisinkaudio.alsa.TinyAlsaMixer;
+import com.example.multisinkaudio.alsa.TinyAlsaPcmPlayer;
 import com.example.multisinkaudio.alsa.TinyAlsaPlayer;
 import com.example.multisinkaudio.alsa.TinyAlsaTrackPlayer;
 
@@ -57,6 +60,12 @@ public class MainActivity extends AppCompatActivity {
     private TinyAlsaTrackPlayer player2;
     private boolean opened2;
 
+    private TinyAlsaPcmPlayer pcmPlayer;
+
+    // Mixer 并发测试用：通过软件混音，依次叠加播放
+    private static final String[] CONCURRENT_ASSETS = { "26.mp3", "27.mp3", "28.mp3" };
+    private static final long     STAGGER_MS        = 800L; // 每段间隔启动时间
+
     private final Runnable periodicRefresh = new Runnable() {
         @Override
         public void run() {
@@ -81,6 +90,9 @@ public class MainActivity extends AppCompatActivity {
         Button selectButton = findViewById(R.id.selectAudioDeviceButton);
         Button playButton = findViewById(R.id.playButton);
         Button stopButton = findViewById(R.id.stopButton);
+        Button playPcmButton = findViewById(R.id.playPcmButton);
+        Button playMixerConcurrentButton = findViewById(R.id.playMixerConcurrentButton);
+        Button stopMixerButton = findViewById(R.id.stopMixerButton);
 
         selectButton.setText("选择 ALSA card");
         selectButton.setOnClickListener(v -> showPlayerPicker());
@@ -92,6 +104,18 @@ public class MainActivity extends AppCompatActivity {
             releaseAllPlayers();
             refreshStatus();
             Toast.makeText(this, "已停止全部播放", Toast.LENGTH_SHORT).show();
+        });
+
+        // PCM 测试：模拟 Unity 调用路径 ── 合成正弦波 → playSFXFromPcm
+        playPcmButton.setOnClickListener(v -> playPcmSineWave());
+
+        // Mixer 并发测试：通过软件混音器，三个 mp3 + 1 路 sine 在同一 PCM 节点混音输出
+        playMixerConcurrentButton.setOnClickListener(v -> playMixerConcurrent());
+
+        stopMixerButton.setOnClickListener(v -> {
+            TinyAlsaMixer.stop();
+            Toast.makeText(this, "Mixer 已停止", Toast.LENGTH_SHORT).show();
+            refreshStatus();
         });
 
         refreshAlsaCards();
@@ -164,6 +188,11 @@ public class MainActivity extends AppCompatActivity {
         refreshAlsaCards();
 
         StringBuilder sb = new StringBuilder();
+        sb.append("【Mixer】\n")
+                .append("  状态：").append(TinyAlsaMixer.isRunning() ? "✓ 运行中" : "已停止").append('\n')
+                .append("  活跃 voice：").append(TinyAlsaMixer.activeVoiceCount()).append('\n')
+                .append("\n");
+
         appendPlayerStatus(sb, 1, MUSIC_ASSET_1, target1, player1, opened1);
         sb.append('\n');
         appendPlayerStatus(sb, 2, MUSIC_ASSET_2, target2, player2, opened2);
@@ -275,6 +304,85 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // ════════════════════════════════════════════════
+    //   PCM 测试：模拟 Unity 路径，验证 TinyAlsaPcmPlayer 是否工作
+    // ════════════════════════════════════════════════
+
+    /**
+     * 在内存里合成一段 1 秒 / 44100Hz / 双声道 / S16_LE 的 440Hz 正弦波，
+     * 完全复用 Unity 那条路径：byte[] PCM → TinyAlsaPcmPlayer → ALSA。
+     *
+     * 如果这个按钮能在 HDMI 听到 "嘟──" 一秒，说明：
+     *   ✓ multisink-alsa 的 PCM 路径完全正常
+     *   ✗ 问题在 Unity 那边：byte[] 字节序、采样率、声道数、转换、JNI 传参
+     *
+     * 反之如果这里也没声音：
+     *   说明 multisink-alsa 自己的 PCM 路径（pumpLoop / 排空 / drain）有问题，
+     *   要先在 multisink-alsa 库里修复。
+     */
+    private void playPcmSineWave() {
+        if (target1 == null && target2 == null) {
+            Toast.makeText(this, "请先为 player 1 或 2 选择 ALSA card", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // 优先用 target1，没选就用 target2
+        TinyAlsaTarget t = target1 != null ? target1 : target2;
+
+        final int rate     = 44100;
+        final int channels = 2;
+        final int seconds  = 1;
+        final double freq  = 440.0;          // A4
+        final double amp   = 0.5;            // -6 dB，避免削顶
+
+        int totalFrames = rate * seconds;
+        byte[] pcm = new byte[totalFrames * channels * 2]; // S16_LE = 2 bytes/sample
+
+        for (int i = 0; i < totalFrames; i++) {
+            double sample = Math.sin(2.0 * Math.PI * freq * i / rate) * amp;
+            short  s16    = (short) (sample * 32767.0);
+            int    base   = i * channels * 2;
+            // L
+            pcm[base    ] = (byte) (s16 & 0xFF);
+            pcm[base + 1] = (byte) ((s16 >> 8) & 0xFF);
+            // R
+            pcm[base + 2] = (byte) (s16 & 0xFF);
+            pcm[base + 3] = (byte) ((s16 >> 8) & 0xFF);
+        }
+
+        // 释放上一次 PCM 测试播放器
+        if (pcmPlayer != null) {
+            pcmPlayer.stop();
+            pcmPlayer = null;
+        }
+
+        Log.i(TAG, "PCM 测试: card=" + t.card + " dev=" + t.device
+                + " 数据大小=" + pcm.length + " bytes (1s 440Hz S16_LE stereo)");
+
+        pcmPlayer = new TinyAlsaPcmPlayer(
+                pcm, rate, channels,
+                t.card, t.device,
+                /* looping = */ false,
+                /* slot    = */ 99,
+                mainHandler,
+                new TinyAlsaPcmPlayer.Listener() {
+                    @Override
+                    public void onError(String message) {
+                        Toast.makeText(MainActivity.this,
+                                "PCM 播放出错：" + message,
+                                Toast.LENGTH_LONG).show();
+                    }
+                    @Override
+                    public void onFinished() {
+                        Log.i(TAG, "PCM 测试播放完成");
+                        Toast.makeText(MainActivity.this,
+                                "PCM 测试播放完成（应听到 1 秒 440Hz）",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+        pcmPlayer.start();
+        Toast.makeText(this, "PCM 测试已启动（card=" + t.card + ")", Toast.LENGTH_SHORT).show();
+    }
+
     private TinyAlsaTrackPlayer startTinyPlayer(String asset,
                                                 TinyAlsaTarget target,
                                                 int playerIndex) throws IOException {
@@ -333,6 +441,92 @@ public class MainActivity extends AppCompatActivity {
     private void releaseAllPlayers() {
         releasePlayer1();
         releasePlayer2();
+        if (pcmPlayer != null) {
+            pcmPlayer.stop();
+            pcmPlayer = null;
+        }
+        TinyAlsaMixer.stop();
+    }
+
+    // ════════════════════════════════════════════════
+    //   Mixer 并发测试：所有音源走 TinyAlsaMixer 软件混音
+    // ════════════════════════════════════════════════
+
+    /**
+     * 启动软件混音器（独占目标 card 的 PCM 节点），
+     * 然后并行解码 26/27/28.mp3 + 合成一段 880Hz sine，全部 addPcmVoice 到 mixer。
+     *
+     * 期望：所有声音叠加输出到 HDMI，没有 EBUSY。
+     */
+    private void playMixerConcurrent() {
+        if (target1 == null) {
+            Toast.makeText(this, "请先为【播放器 1】选择 ALSA card（建议 HDMI）",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        // 与 mixer 互斥：先停掉所有直开 PCM 的播放器
+        releasePlayer1();
+        releasePlayer2();
+        if (pcmPlayer != null) { pcmPlayer.stop(); pcmPlayer = null; }
+
+        TinyAlsaMixer.start(target1.card, target1.device);
+        if (!TinyAlsaMixer.isRunning()) {
+            Toast.makeText(this, "Mixer 启动失败（pcm_open 失败？）",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        // 异步解码三个 mp3，依次错开 STAGGER_MS 投入混音池
+        for (int i = 0; i < CONCURRENT_ASSETS.length; i++) {
+            final int    idx   = i;
+            final String asset = CONCURRENT_ASSETS[i];
+            new Thread(() -> {
+                try {
+                    Mp3DecodeHelper.Result r = Mp3DecodeHelper.decodeAsset(this, asset);
+                    // 解码完成后按序号错开提交，听起来分层
+                    mainHandler.postDelayed(() -> {
+                        int id = TinyAlsaMixer.addPcmVoice(r.pcm, r.sampleRate, r.channels,
+                                /* loop */ false, /* vol */ 0.7f, /* name */ null);
+                        Log.i(TAG, "mixer add " + asset + " → voiceId=" + id
+                                + "  (delay=" + (idx * STAGGER_MS) + "ms)");
+                    }, idx * STAGGER_MS);
+                } catch (Exception e) {
+                    Log.e(TAG, "mixer decode failed: " + asset, e);
+                    mainHandler.post(() -> Toast.makeText(this,
+                            asset + " 解码失败：" + e.getMessage(),
+                            Toast.LENGTH_LONG).show());
+                }
+            }, "MixerDecode-" + asset).start();
+        }
+
+        // 在三段 mp3 之后再追加一段 1 秒 880Hz sine，方便听辨混音
+        byte[] sine = synthSine(880.0, 1.0, 44100, 2, 0.4);
+        mainHandler.postDelayed(() -> TinyAlsaMixer.addPcmVoice(sine, 44100, 2,
+                /* loop */ false, /* vol */ 1f, /* name */ null),
+                CONCURRENT_ASSETS.length * STAGGER_MS);
+
+        Toast.makeText(this,
+                "Mixer 已启动，每段 mp3 间隔 " + STAGGER_MS + "ms 依次叠加",
+                Toast.LENGTH_LONG).show();
+        mainHandler.postDelayed(this::refreshStatus,
+                CONCURRENT_ASSETS.length * STAGGER_MS + 200L);
+    }
+
+    /** 合成 PCM sine 波（S16_LE）。 */
+    private static byte[] synthSine(double freq, double seconds,
+                                    int rate, int channels, double amp) {
+        int totalFrames = (int) (rate * seconds);
+        byte[] pcm = new byte[totalFrames * channels * 2];
+        for (int i = 0; i < totalFrames; i++) {
+            short s16 = (short) (Math.sin(2 * Math.PI * freq * i / rate) * amp * 32767);
+            int base  = i * channels * 2;
+            for (int c = 0; c < channels; c++) {
+                pcm[base + c * 2]     = (byte)  (s16 & 0xFF);
+                pcm[base + c * 2 + 1] = (byte) ((s16 >> 8) & 0xFF);
+            }
+        }
+        return pcm;
     }
 
     /** 选中的 ALSA card+device 目标。 */

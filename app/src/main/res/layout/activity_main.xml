@@ -34,6 +34,26 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="停止播放" />
+
+        <Button
+            android:id="@+id/playPcmButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="🎵 PCM 测试 (合成 440Hz 正弦波，模拟 Unity 路径)" />
+
+        <Button
+            android:id="@+id/playMixerConcurrentButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="🎚 Mixer 并发 (软件混音 26/27/28.mp3 + sine)" />
+
+        <Button
+            android:id="@+id/stopMixerButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="🛑 停止 Mixer" />
     </LinearLayout>
 
     <TextView
