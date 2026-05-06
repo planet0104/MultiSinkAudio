@@ -24,40 +24,51 @@
             android:text="选择 ALSA card" />
 
         <Button
-            android:id="@+id/playButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="同时播放" />
-
-        <Button
-            android:id="@+id/stopButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="停止播放" />
-
-        <Button
-            android:id="@+id/playPcmButton"
+            android:id="@+id/playBgmButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="🎵 PCM 测试 (合成 440Hz 正弦波，模拟 Unity 路径)" />
+            android:text="播放背景音乐 (循环 music_6.mp3)" />
 
         <Button
-            android:id="@+id/playMixerConcurrentButton"
+            android:id="@+id/stopBgmButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="停止背景音乐" />
+
+        <Button
+            android:id="@+id/playSfxMixButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="🎚 Mixer 并发 (软件混音 26/27/28.mp3 + sine)" />
+            android:text="播放特效混音 (26.mp3 + 880Hz 正弦波)" />
 
         <Button
-            android:id="@+id/stopMixerButton"
+            android:id="@+id/stopAllButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="🛑 停止 Mixer" />
+            android:layout_marginTop="16dp"
+            android:text="停止全部 (关闭 Mixer)" />
+
+        <TextView
+            android:id="@+id/masterVolumeLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="主音量 100%"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/masterVolumeSeekBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="150"
+            android:progress="100" />
     </LinearLayout>
 
     <TextView
-        android:id="@+id/audioDeviceListTextView"
+        android:id="@+id/statusTextView"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:layout_marginTop="16dp"

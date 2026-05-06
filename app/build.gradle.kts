@@ -34,7 +34,7 @@ android {
     // 如果你换设备或者不在乎升级覆盖，把整个 signingConfigs 段删掉，buildTypes 里也别再引用即可。
     signingConfigs {
         create("platform") {
-            storeFile = file("${rootDir}/Cx3568.jks")
+            storeFile = file("${rootDir}/rk3399.jks")
             storePassword = "Wogemu2022"
             keyAlias = "wogemu"
             keyPassword = "Wogemu2022"

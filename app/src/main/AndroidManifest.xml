@@ -14,8 +14,14 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"
         tools:ignore="MissingPermission" />
 
+    <!--
+        largeHeap=true：BGM (~35MB) + SFX + Mixer short[] (~34MB) + 临时解码缓冲，
+        默认 192MB 堆很容易撞上限触发 OOM；开 largeHeap 把上限抬到 384~512MB。
+        参考日志：growth limit 201326592（192MB），分配 67MB 时直接 OOM。
+    -->
     <application
         android:allowBackup="true"
+        android:largeHeap="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"

@@ -7,9 +7,9 @@ import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.util.Log;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 /**
  * 把 APK assets/ 里的 mp3 / wav / aac 等音频文件一次性解码成完整 PCM byte[]。
@@ -75,8 +75,31 @@ public final class Mp3DecodeHelper {
             int rate     = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE);
             int channels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
 
-            ByteArrayOutputStream pcmOut = new ByteArrayOutputStream(64 * 1024);
-            MediaCodec.BufferInfo info   = new MediaCodec.BufferInfo();
+            // 关键：之前用 ByteArrayOutputStream，结尾 toByteArray() 会再做一次全量复制，
+            // 35MB 文件瞬时占用 ≈ 35MB(内部 buf) + 35MB(返回数组) + 多次扩容副本 → 直接 OOM。
+            //
+            // 现在改成：预先按 KEY_DURATION 估算总大小，分配一块 byte[] + 偏移指针写入，
+            //   - 不需要 toByteArray() 的复制；
+            //   - 预估准时一次性命中，0 次扩容；
+            //   - 估小了最多 grow 1~2 次（每次 1.5x），峰值依然只是单缓冲；
+            //   - 估大了用 Arrays.copyOf 裁掉尾部多余 → 仅一次复制。
+            int initialCapacity = 64 * 1024;
+            if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
+                long durationUs = fmt.getLong(MediaFormat.KEY_DURATION);
+                if (durationUs > 0) {
+                    long estimated = durationUs * (long) rate * channels * 2 / 1_000_000L;
+                    estimated += 32 * 1024; // 末尾 frame 余量
+                    if (estimated > 64L * 1024 * 1024) estimated = 64L * 1024 * 1024;
+                    if (estimated > initialCapacity) initialCapacity = (int) estimated;
+                }
+            }
+            Log.i(TAG, "decodeAsset " + assetName
+                    + " rate=" + rate + " ch=" + channels
+                    + " preAllocate=" + initialCapacity + " bytes");
+
+            byte[] pcmBuf = new byte[initialCapacity];
+            int    pcmLen = 0;
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
 
             boolean inputDone  = false;
             boolean outputDone = false;
@@ -102,11 +125,19 @@ public final class Mp3DecodeHelper {
                 if (outIdx >= 0) {
                     ByteBuffer outBuf = decoder.getOutputBuffer(outIdx);
                     if (info.size > 0 && outBuf != null) {
+                        // 容量不够就 1.5x 扩，扩容只是一次 copyOf；不会再叠 toByteArray()。
+                        if (pcmLen + info.size > pcmBuf.length) {
+                            int newCap = pcmBuf.length + (pcmBuf.length >> 1);
+                            if (newCap < pcmLen + info.size) newCap = pcmLen + info.size;
+                            Log.w(TAG, "decodeAsset " + assetName
+                                    + " grow buf " + pcmBuf.length + " → " + newCap
+                                    + " (pcmLen=" + pcmLen + " +incoming=" + info.size + ")");
+                            pcmBuf = Arrays.copyOf(pcmBuf, newCap);
+                        }
                         outBuf.position(info.offset);
                         outBuf.limit(info.offset + info.size);
-                        byte[] chunk = new byte[info.size];
-                        outBuf.get(chunk);
-                        pcmOut.write(chunk);
+                        outBuf.get(pcmBuf, pcmLen, info.size); // 直接拷到目标缓冲，省掉 chunk 临时数组
+                        pcmLen += info.size;
                     }
                     decoder.releaseOutputBuffer(outIdx, false);
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
@@ -123,9 +154,11 @@ public final class Mp3DecodeHelper {
                 }
             }
 
-            byte[] pcm = pcmOut.toByteArray();
+            // 估准了直接复用 pcmBuf；估大了裁一次（仅一次复制）。
+            byte[] pcm = (pcmLen == pcmBuf.length) ? pcmBuf : Arrays.copyOf(pcmBuf, pcmLen);
             Log.i(TAG, "decoded " + assetName + " → "
-                    + pcm.length + " bytes @ " + rate + "Hz/" + channels + "ch");
+                    + pcm.length + " bytes @ " + rate + "Hz/" + channels + "ch"
+                    + " (bufCap=" + pcmBuf.length + ", trimmed=" + (pcm != pcmBuf) + ")");
             return new Result(pcm, rate, channels);
 
         } finally {

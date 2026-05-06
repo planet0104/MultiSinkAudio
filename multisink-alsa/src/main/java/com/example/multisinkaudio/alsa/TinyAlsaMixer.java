@@ -40,6 +40,13 @@ public class TinyAlsaMixer {
     private static Thread   mixerThread;
     private static volatile boolean stopRequested;
 
+    /**
+     * 主音量 / Master volume。作用于整个 mixer 最终输出，
+     * 在 clamp 之前统一乘进去；范围 0.0~1.0（常态），允许到 1.5 做轻度 boost
+     * （超过 1.0 时 clamp 会更频繁触发，可能产生轻微失真）。
+     */
+    private static volatile float masterVolume = 1.0f;
+
     // ── Voice 数据结构 ─────────────────────────────────────────────────────
     private static final class Voice {
         final int     id;
@@ -152,6 +159,19 @@ public class TinyAlsaMixer {
 
         int id = voiceIdGen.getAndIncrement();
         Voice v = new Voice(id, data, loop, clamp01(volume), name);
+
+        // 如果同名旧 voice 还在，先把它标记为 done。
+        // pumpLoop 检查 done 后会跳过该 voice，从而避免在
+        // 「voices.put 新 → voices.remove 旧」这几微秒的 race 窗口里
+        // 同时把新旧两路一起混进 mix 造成短促"重音"。
+        if (name != null) {
+            Integer existingId = namedVoices.get(name);
+            if (existingId != null) {
+                Voice existing = voices.get(existingId);
+                if (existing != null) existing.done = true;
+            }
+        }
+
         voices.put(id, v);
 
         if (name != null) {
@@ -207,6 +227,59 @@ public class TinyAlsaMixer {
         return voices.size();
     }
 
+    /** 查询是否存在指定名字的活跃 voice（典型用例：BGM 重复点击判重）。 */
+    public static boolean hasNamedVoice(String name) {
+        return name != null && namedVoices.containsKey(name);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  音量控制
+    // ════════════════════════════════════════════════════════════════════════
+
+    /**
+     * 设置 mixer 主音量（线性增益）。
+     *
+     * 范围会被 clamp 到 [0, 1.5]：
+     *   - 0.0   静音
+     *   - 1.0   原始电平（默认）
+     *   - >1.0  软 boost（混音超过 32767 时自动 clamp，会有轻微失真）
+     *
+     * 这条音量是对最终混音结果的"总闸门"，不需要 mixer 处于运行中也可设置。
+     */
+    public static void setMasterVolume(float volume) {
+        float v = volume;
+        if (v < 0f)   v = 0f;
+        if (v > 1.5f) v = 1.5f;
+        masterVolume = v;
+        Log.i(TAG, "master volume = " + v);
+    }
+
+    public static float getMasterVolume() {
+        return masterVolume;
+    }
+
+    /**
+     * 修改一个已存在 voice 的音量（不打断播放）。
+     * @return true 成功；false 没找到该 voice
+     */
+    public static boolean setVoiceVolume(int voiceId, float volume) {
+        Voice v = voices.get(voiceId);
+        if (v == null) return false;
+        v.volume = clamp01(volume);
+        return true;
+    }
+
+    /**
+     * 按名字修改 voice 音量（典型用例：调 BGM 音量保持 SFX 不变）。
+     * @return true 成功；false 没找到该 name
+     */
+    public static boolean setVoiceVolumeByName(String name, float volume) {
+        if (name == null) return false;
+        Integer id = namedVoices.get(name);
+        if (id == null) return false;
+        return setVoiceVolume(id, volume);
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     //  混音线程
     // ════════════════════════════════════════════════════════════════════════
@@ -247,10 +320,13 @@ public class TinyAlsaMixer {
                     }
                 }
 
-                // clamp + 转 byte[]，同时记录本周期的输出 peak
+                // master volume 应用 → clamp → 转 byte[]，同时记录本周期的输出 peak
+                final float mv = masterVolume;
+                final boolean applyMv = mv != 1.0f;
                 int periodPeak = 0;
                 for (int i = 0; i < samplesPerPeriod; i++) {
                     int s = mix[i];
+                    if (applyMv) s = (int) (s * mv);
                     if (s >  32767) s =  32767;
                     if (s < -32768) s = -32768;
                     outBuf[i * 2]     = (byte)  (s & 0xFF);
